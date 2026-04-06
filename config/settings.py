@@ -64,7 +64,7 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database - PostgreSQL (uses DATABASE_URL in production, falls back to local dev DB)
 DATABASES = {
     'default': dj_database_url.parse(
-        os.environ.get('DATABASE_URL', 'postgresql://postgres:1234@localhost:5432/analysis_dashboard')
+        os.environ.get('DATABASE_URL', 'postgresql://analysis:2QhtAmAk1YMtkJExn3kQ@analysis-cycuqs:5432/analysis')
     )
 }
 

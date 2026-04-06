@@ -73,10 +73,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD curl --fail http://localhost:8000/ || exit 1
 
 # Gunicorn optimized for production
-CMD ["gunicorn", "config.wsgi:application",
-     "--bind", "0.0.0.0:8000",
-     "--workers", "3",
-     "--threads", "2",
-     "--max-requests", "1000",
-     "--max-requests-jitter", "100",
-     "--timeout", "60"]
+CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "2", "--max-requests", "1000", "--max-requests-jitter", "100", "--timeout", "60"]

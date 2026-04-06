@@ -5,8 +5,6 @@ Django settings for Renderways Call Plan Generator.
 import os
 from pathlib import Path
 
-import dj_database_url
-
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = 'django-insecure-renderways-callplan-dev-key-change-in-production'

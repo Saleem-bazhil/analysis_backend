@@ -1,5 +1,5 @@
 # =========================
-# 1. Builder Stage (Wheels)
+# 1. Builder Stage
 # =========================
 FROM python:3.11-slim AS builder
 
@@ -39,29 +39,23 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# ✅ FIXED USER
 RUN addgroup --system app && adduser --system --group app --home /home/app
 
 RUN mkdir -p /home/app && chown -R app:app /home/app
 
-# Copy wheels
 COPY --from=builder /wheels /wheels
 COPY requirements.txt .
 
 RUN pip install --no-cache-dir /wheels/*
 
-# Copy project
 COPY . .
 
-# Permissions
 RUN chown -R app:app /app
 
-# ✅ RUN BEFORE USER SWITCH
 RUN python manage.py collectstatic --noinput
 
 USER app
 
-# Compile python (optional)
 RUN python -m compileall .
 
 EXPOSE 8000

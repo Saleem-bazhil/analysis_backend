@@ -3,9 +3,7 @@ version: '3.9'
 services:
   web:
     build: .
-    container_name: django_app
     restart: always
-    command: gunicorn config.wsgi:application --bind 0.0.0.0:8000
     depends_on:
       - db
     environment:
@@ -14,12 +12,11 @@ services:
       DB_PASSWORD: ${DB_PASSWORD}
       DB_HOST: db
       DB_PORT: 5432
-    ports:
-      - "8000"   # internal only (panel manages external)
+    expose:
+      - "8000"   # ✅ ONLY THIS (no ports)
 
   db:
     image: postgres:15
-    container_name: postgres_db
     restart: always
     environment:
       POSTGRES_DB: ${DB_NAME}

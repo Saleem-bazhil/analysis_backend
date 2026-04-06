@@ -29,7 +29,8 @@ FROM python:3.11-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    HOME=/home/app
+    HOME=/home/app \
+    PORT=9000
 
 WORKDIR /app
 
@@ -52,15 +53,20 @@ COPY . .
 
 RUN chown -R app:app /app
 
+# Collect static files
 RUN python manage.py collectstatic --noinput
 
 USER app
 
+# Compile python files
 RUN python -m compileall .
 
-EXPOSE 8000
+# Expose new port
+EXPOSE 9000
 
+# Healthcheck updated port
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
-  CMD curl --fail http://localhost:8000/ || exit 1
+  CMD curl --fail http://localhost:9000/ || exit 1
 
-CMD ["gunicorn", "config.wsgi:application", "--bind", "0.0.0.0:8000", "--workers", "3", "--threads", "2", "--max-requests", "1000", "--max-requests-jitter", "100", "--timeout", "60"]
+# Run Gunicorn on dynamic PORT
+CMD ["sh", "-c", "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --threads 2 --max-requests 1000 --max-requests-jitter 100 --timeout 60"]

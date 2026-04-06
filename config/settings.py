@@ -61,11 +61,18 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database - PostgreSQL (uses DATABASE_URL in production, falls back to local dev DB)
+# Database - PostgreSQL (load connection URL from environment variables)
+DATABASE_URL = os.environ.get('DATABASE_URL')
+if not DATABASE_URL:
+    DB_NAME = os.environ.get('DB_NAME', 'analysis')
+    DB_USER = os.environ.get('DB_USER', 'analysis')
+    DB_PASSWORD = os.environ.get('DB_PASSWORD', '2QhtAmAk1YMtkJExn3kQ')
+    DB_HOST = os.environ.get('DB_HOST', 'analysis-cycuqs')
+    DB_PORT = os.environ.get('DB_PORT', '5432')
+    DATABASE_URL = f'postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}'
+
 DATABASES = {
-    'default': dj_database_url.parse(
-        os.environ.get('DATABASE_URL', 'postgresql://analysis:2QhtAmAk1YMtkJExn3kQ@analysis-cycuqs:5432/analysis')
-    )
+    'default': dj_database_url.parse(DATABASE_URL)
 }
 
 AUTH_PASSWORD_VALIDATORS = [

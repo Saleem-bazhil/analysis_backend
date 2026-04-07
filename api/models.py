@@ -64,3 +64,15 @@ class CallPlanRecord(models.Model):
 
     def __str__(self):
         return f"{self.ticket_no} - {self.classification}"
+
+
+class WorkspaceState(models.Model):
+    """Stores the latest state of the global workspace for synchronization."""
+    updated_at = models.DateTimeField(auto_now=True)
+    state = models.JSONField(default=dict)
+
+    class Meta:
+        ordering = ['-updated_at']
+
+    def __str__(self):
+        return f"WorkspaceState last updated at {self.updated_at}"

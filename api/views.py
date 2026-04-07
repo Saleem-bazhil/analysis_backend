@@ -9,7 +9,7 @@ from rest_framework.decorators import api_view, parser_classes
 from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.response import Response
 
-from .models import UploadedFile, CallPlanRecord
+from .models import UploadedFile, CallPlanRecord, WorkspaceState
 from .serializers import (
     UploadedFileSerializer,
     UploadedFileListSerializer,
@@ -257,3 +257,28 @@ def history(request):
         qs = qs.filter(uploaded_by=uploaded_by)
     serializer = UploadedFileListSerializer(qs, many=True)
     return Response(serializer.data)
+
+
+@api_view(['GET', 'POST'])
+def workspace_state(request):
+    """
+    GET /api/workspace/
+    POST /api/workspace/
+    Get or update the global workspace state.
+    """
+    if request.method == 'GET':
+        state_obj = WorkspaceState.objects.first()
+        if state_obj:
+            return Response(state_obj.state)
+        return Response({})
+
+    elif request.method == 'POST':
+        # Update or create the single workspace state
+        state_obj = WorkspaceState.objects.first()
+        if state_obj:
+            state_obj.state = request.data
+            state_obj.save()
+        else:
+            WorkspaceState.objects.create(state=request.data)
+        
+        return Response({'status': 'success'})

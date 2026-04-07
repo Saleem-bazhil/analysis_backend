@@ -8,4 +8,5 @@ urlpatterns = [
     path('files/<int:pk>/', views.file_detail, name='file-detail'),
     path('export/', views.export_file, name='export-file'),
     path('history/', views.history, name='history'),
+    path('workspace/', views.workspace_state, name='workspace-state'),
 ]

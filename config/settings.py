@@ -82,7 +82,7 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
-OK. 
+
 # ── Redis / Channel Layer ──
 REDIS_URL = os.environ.get('REDIS_URL', '')
 if REDIS_URL:

@@ -113,9 +113,9 @@ class WorkspaceSyncConsumer(AsyncJsonWebsocketConsumer):
         from .models import WorkspaceState
         obj = WorkspaceState.objects.first()
         if obj:
-            if not isinstance(obj.state, dict):
-                obj.state = {}
-            obj.state.update(state)
+            new_state = dict(obj.state) if isinstance(obj.state, dict) else {}
+            new_state.update(state)
+            obj.state = new_state
             obj.save()
         else:
             WorkspaceState.objects.create(state=state)

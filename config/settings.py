@@ -1,19 +1,27 @@
 """
 Django settings for Renderways Call Plan Generator.
+Production-ready with Channels, JWT, PostgreSQL, Redis.
 """
 
 import os
 from pathlib import Path
+from datetime import timedelta
+
+import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = 'django-insecure-renderways-callplan-dev-key-change-in-production'
+# ── Core ──
+SECRET_KEY = os.environ.get(
+    'SECRET_KEY',
+    'django-insecure-renderways-callplan-dev-key-change-in-production',
+)
+DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
 
-DEBUG = True
-
-ALLOWED_HOSTS = ['*']
-
+# ── Apps ──
 INSTALLED_APPS = [
+    'daphne',  # ASGI server — must be before django apps
     'django.contrib.admin',
     'django.contrib.auth',
     'django.contrib.contenttypes',
@@ -23,6 +31,7 @@ INSTALLED_APPS = [
     # Third party
     'rest_framework',
     'corsheaders',
+    'channels',
     # Local
     'api',
 ]
@@ -57,16 +66,46 @@ TEMPLATES = [
     },
 ]
 
+# ── ASGI (replaces WSGI for WebSocket support) ──
+ASGI_APPLICATION = 'config.asgi.application'
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database configuration - Using SQLite for temporary testing
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+# ── Database ──
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+if DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600),
     }
-}
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
+# ── Redis / Channel Layer ──
+REDIS_URL = os.environ.get('REDIS_URL', '')
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {
+                'hosts': [REDIS_URL],
+                'capacity': 1500,
+                'expiry': 10,
+            },
+        },
+    }
+else:
+    # In-memory channel layer for local development
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
+
+# ── Auth ──
 AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator'},
     {'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator'},
@@ -74,24 +113,7 @@ AUTH_PASSWORD_VALIDATORS = [
     {'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator'},
 ]
 
-LANGUAGE_CODE = 'en-us'
-TIME_ZONE = 'Asia/Kolkata'
-USE_I18N = True
-USE_TZ = True
-
-STATIC_URL = 'static/'
-STATIC_ROOT = BASE_DIR / 'staticfiles'
-
-# Media files (uploads)
-MEDIA_URL = '/media/'
-MEDIA_ROOT = BASE_DIR / 'media'
-
-DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
-# CORS - allow all origins for development
-CORS_ALLOW_ALL_ORIGINS = True
-
-# Django REST Framework
+# ── Django REST Framework ──
 REST_FRAMEWORK = {
     'DEFAULT_RENDERER_CLASSES': [
         'rest_framework.renderers.JSONRenderer',
@@ -101,4 +123,81 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.MultiPartParser',
         'rest_framework.parsers.FormParser',
     ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
+
+# ── Simple JWT ──
+SIMPLE_JWT = {
+    'ACCESS_TOKEN_LIFETIME': timedelta(hours=12),
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': False,
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+}
+
+# ── Internationalization ──
+LANGUAGE_CODE = 'en-us'
+TIME_ZONE = 'Asia/Kolkata'
+USE_I18N = True
+USE_TZ = True
+
+# ── Static & Media ──
+STATIC_URL = 'static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
+MEDIA_URL = '/media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
+DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
+
+# ── CORS ──
+CORS_ALLOWED_ORIGINS_STR = os.environ.get('CORS_ALLOWED_ORIGINS', '')
+if CORS_ALLOWED_ORIGINS_STR:
+    CORS_ALLOW_ALL_ORIGINS = False
+    CORS_ALLOWED_ORIGINS = [o.strip() for o in CORS_ALLOWED_ORIGINS_STR.split(',')]
+else:
+    CORS_ALLOW_ALL_ORIGINS = True
+
+# ── CSRF ──
+CSRF_TRUSTED_STR = os.environ.get('CSRF_TRUSTED_ORIGINS', '')
+if CSRF_TRUSTED_STR:
+    CSRF_TRUSTED_ORIGINS = [o.strip() for o in CSRF_TRUSTED_STR.split(',')]
+
+# ── Logging ──
+LOGGING = {
+    'version': 1,
+    'disable_existing_loggers': False,
+    'formatters': {
+        'verbose': {
+            'format': '{asctime} {levelname} {name} {message}',
+            'style': '{',
+        },
+    },
+    'handlers': {
+        'console': {
+            'class': 'logging.StreamHandler',
+            'formatter': 'verbose',
+        },
+    },
+    'root': {
+        'handlers': ['console'],
+        'level': 'INFO',
+    },
+    'loggers': {
+        'django': {
+            'handlers': ['console'],
+            'level': 'WARNING',
+            'propagate': False,
+        },
+        'api': {
+            'handlers': ['console'],
+            'level': 'INFO',
+            'propagate': False,
+        },
+    },
 }

@@ -5,8 +5,9 @@ import pandas as pd
 from django.conf import settings
 from django.http import FileResponse
 from rest_framework import status
-from rest_framework.decorators import api_view, parser_classes
+from rest_framework.decorators import api_view, parser_classes, permission_classes
 from rest_framework.parsers import MultiPartParser, FormParser
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
 from .models import UploadedFile, CallPlanRecord, WorkspaceState
@@ -22,6 +23,7 @@ from .engine import process_call_plan, generate_export_df, read_file_to_df
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 @parser_classes([MultiPartParser, FormParser])
 def upload_file(request):
     """
@@ -35,7 +37,7 @@ def upload_file(request):
     file_type = request.data.get('file_type', 'flex_wip')
     city = request.data.get('city', 'Chennai')
     report_date = request.data.get('report_date', None)
-    uploaded_by = request.data.get('uploaded_by', 'admin')
+    uploaded_by = request.user.username
 
     # Create the UploadedFile record
     uploaded = UploadedFile.objects.create(
@@ -58,7 +60,7 @@ def upload_file(request):
         # Return first 50 rows as preview
         preview = df.head(50).fillna('').to_dict(orient='records')
         columns = list(df.columns)
-    except Exception as e:
+    except Exception:
         preview = []
         columns = []
 
@@ -72,6 +74,7 @@ def upload_file(request):
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def process_files(request):
     """
     POST /api/process/
@@ -122,6 +125,7 @@ def process_files(request):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def list_files(request):
     """
     GET /api/files/
@@ -147,6 +151,7 @@ def list_files(request):
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def file_detail(request, pk):
     """
     GET /api/files/<id>/
@@ -162,6 +167,7 @@ def file_detail(request, pk):
 
 
 @api_view(['POST'])
+@permission_classes([IsAuthenticated])
 def export_file(request):
     """
     POST /api/export/
@@ -204,6 +210,7 @@ def export_file(request):
         file=relative_path,
         file_type='generated',
         original_name=filename,
+        uploaded_by=request.user.username,
         city=city,
         report_date=report_date,
         file_size=os.path.getsize(file_path),
@@ -236,16 +243,18 @@ def export_file(request):
         ))
     CallPlanRecord.objects.bulk_create(records_to_create)
 
-    # Return file download
+    # Return file download — FileResponse handles closing the file handle
     response = FileResponse(
         open(file_path, 'rb'),
+        as_attachment=True,
+        filename=filename,
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
-    response['Content-Disposition'] = f'attachment; filename="{filename}"'
     return response
 
 
 @api_view(['GET'])
+@permission_classes([IsAuthenticated])
 def history(request):
     """
     GET /api/history/
@@ -260,6 +269,7 @@ def history(request):
 
 
 @api_view(['GET', 'POST'])
+@permission_classes([IsAuthenticated])
 def workspace_state(request):
     """
     GET /api/workspace/
@@ -280,5 +290,5 @@ def workspace_state(request):
             state_obj.save()
         else:
             WorkspaceState.objects.create(state=request.data)
-        
+
         return Response({'status': 'success'})

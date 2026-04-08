@@ -68,5 +68,8 @@ EXPOSE 9000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
   CMD curl --fail http://localhost:9000/ || exit 1
 
-# Run Gunicorn on dynamic PORT
-CMD ["sh", "-c", "gunicorn config.wsgi:application --bind 0.0.0.0:$PORT --workers 3 --threads 2 --max-requests 1000 --max-requests-jitter 100 --timeout 60"]
+# Entrypoint runs migrations + seeds users before starting server
+ENTRYPOINT ["sh", "entrypoint.sh"]
+
+# Run Daphne ASGI server (supports HTTP + WebSocket)
+CMD ["sh", "-c", "daphne -b 0.0.0.0 -p $PORT config.asgi:application"]

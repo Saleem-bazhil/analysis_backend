@@ -1,8 +1,11 @@
 #!/bin/sh
 
-echo "📦 Running migrations..."
+echo "Running migrations..."
 python manage.py migrate --noinput
 
-echo "🚀 Starting server..."
+echo "Seeding users..."
+python manage.py seed_users
+
+echo "Starting server..."
 
 exec "$@"

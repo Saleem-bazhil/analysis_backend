@@ -96,12 +96,23 @@ if REDIS_URL:
             },
         },
     }
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+        }
+    }
 else:
     # In-memory channel layer for local development
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels.layers.InMemoryChannelLayer',
         },
+    }
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+        }
     }
 
 # ── Auth ──
@@ -166,6 +177,15 @@ else:
 CSRF_TRUSTED_STR = os.environ.get('CSRF_TRUSTED_ORIGINS', '')
 if CSRF_TRUSTED_STR:
     CSRF_TRUSTED_ORIGINS = [o.strip() for o in CSRF_TRUSTED_STR.split(',')]
+
+# ── Security (production) ──
+if not DEBUG:
+    SECURE_BROWSER_XSS_FILTER = True
+    SECURE_CONTENT_TYPE_NOSNIFF = True
+    X_FRAME_OPTIONS = 'DENY'
+    SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+    SESSION_COOKIE_SECURE = True
+    CSRF_COOKIE_SECURE = True
 
 # ── Logging ──
 LOGGING = {

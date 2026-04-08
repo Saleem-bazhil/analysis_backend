@@ -5,12 +5,15 @@ Production-ready with Channels, JWT, PostgreSQL, Redis.
 
 import os
 from pathlib import Path
-<<<<<<< HEAD
 from datetime import timedelta
 
 import dj_database_url
+from dotenv import load_dotenv
 
 BASE_DIR = Path(__file__).resolve().parent.parent
+
+# Load environment variables from .env file
+load_dotenv(os.path.join(BASE_DIR, '.env'))
 
 # ── Core ──
 SECRET_KEY = os.environ.get(
@@ -19,21 +22,6 @@ SECRET_KEY = os.environ.get(
 )
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
-=======
-import dj_database_url
-from dotenv import load_dotenv
-
-BASE_DIR = Path(__file__).resolve().parent.parent
-
-# Load environment variables from .env
-load_dotenv(os.path.join(BASE_DIR, '.env'))
-
-SECRET_KEY = 'django-insecure-renderways-callplan-dev-key-change-in-production'
-
-DEBUG = True
-
-ALLOWED_HOSTS = ['*']
->>>>>>> d7dd251fc1780b717bc4851a24a968dd5d4a3af4
 
 # ── Apps ──
 INSTALLED_APPS = [
@@ -86,22 +74,7 @@ TEMPLATES = [
 ASGI_APPLICATION = 'config.asgi.application'
 WSGI_APPLICATION = 'config.wsgi.application'
 
-<<<<<<< HEAD
 # ── Database ──
-DATABASE_URL = os.environ.get('DATABASE_URL', '')
-if DATABASE_URL:
-    DATABASES = {
-        'default': dj_database_url.parse(DATABASE_URL, conn_max_age=600),
-    }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
-=======
-# Database configuration - Using PostgreSQL via dj_database_url
 DATABASES = {
     'default': dj_database_url.config(
         default=os.environ.get('DATABASE_URL', f"sqlite:///{BASE_DIR / 'db.sqlite3'}"),
@@ -109,8 +82,7 @@ DATABASES = {
         conn_health_checks=True,
     )
 }
->>>>>>> d7dd251fc1780b717bc4851a24a968dd5d4a3af4
-
+OK. 
 # ── Redis / Channel Layer ──
 REDIS_URL = os.environ.get('REDIS_URL', '')
 if REDIS_URL:

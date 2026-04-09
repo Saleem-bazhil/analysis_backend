@@ -333,7 +333,7 @@ def process_call_plan(flex_file_path, callplan_file_path, city='Chennai', report
             'location': flex.get('work_location', ''),
             'segment': segment,
             'classification': 'NEW',
-            'morning_status': '',
+            'morning_status': 'To be scheduled',
             'evening_status': '',
             'engineer': '',
             'contact_no': flex.get('contact_no', ''),

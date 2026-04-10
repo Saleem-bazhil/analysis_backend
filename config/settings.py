@@ -22,6 +22,10 @@ SECRET_KEY = os.environ.get(
 )
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '*').split(',')
+# Always allow localhost for local development
+for _local in ('localhost', '127.0.0.1'):
+    if _local not in ALLOWED_HOSTS:
+        ALLOWED_HOSTS.append(_local)
 
 # ── Apps ──
 INSTALLED_APPS = [
@@ -85,7 +89,17 @@ DATABASES = {
 
 # ── Redis / Channel Layer ──
 REDIS_URL = os.environ.get('REDIS_URL', '')
+_redis_reachable = False
 if REDIS_URL:
+    try:
+        import redis
+        _r = redis.from_url(REDIS_URL, socket_connect_timeout=2)
+        _r.ping()
+        _redis_reachable = True
+    except Exception:
+        _redis_reachable = False
+
+if REDIS_URL and _redis_reachable:
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels_redis.core.RedisChannelLayer',
@@ -103,7 +117,7 @@ if REDIS_URL:
         }
     }
 else:
-    # In-memory channel layer for local development
+    # In-memory channel layer for local development (or unreachable Redis)
     CHANNEL_LAYERS = {
         'default': {
             'BACKEND': 'channels.layers.InMemoryChannelLayer',

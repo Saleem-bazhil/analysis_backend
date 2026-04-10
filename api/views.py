@@ -1,4 +1,5 @@
 import os
+import re
 from datetime import datetime
 
 import pandas as pd
@@ -10,7 +11,10 @@ from rest_framework.parsers import MultiPartParser, FormParser
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
-from .models import UploadedFile, CallPlanRecord, WorkspaceState
+from .models import (
+    UploadedFile, CallPlanRecord, WorkspaceState,
+    UploadSession, AnalysisResult, ClosedCall,
+)
 from .serializers import (
     UploadedFileSerializer,
     UploadedFileListSerializer,
@@ -18,9 +22,73 @@ from .serializers import (
     CallPlanRecordSerializer,
     ProcessRequestSerializer,
     ExportRequestSerializer,
+    UploadSessionSerializer,
+    AnalysisResultSerializer,
+    AnalysisResultListSerializer,
+    ClosedCallSerializer,
+    ManualWOSerializer,
+    ClosedCallRequestSerializer,
+    SaveAnalysisSerializer,
 )
 from .engine import process_call_plan, generate_export_df, read_file_to_df
 
+
+# ── Upload Session ──
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def create_upload_session(request):
+    """
+    POST /api/sessions/
+    Create a new upload session to group flex + rtpl files together.
+    """
+    city = request.data.get('city', 'Chennai')
+    report_date = request.data.get('report_date', None)
+
+    session = UploadSession.objects.create(
+        uploaded_by=request.user.username,
+        city=city,
+        report_date=report_date or None,
+    )
+
+    serializer = UploadSessionSerializer(session)
+    return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_upload_sessions(request):
+    """
+    GET /api/sessions/
+    List all upload sessions.
+    """
+    qs = UploadSession.objects.all()
+    city = request.query_params.get('city')
+    if city:
+        qs = qs.filter(city__iexact=city)
+    serializer = UploadSessionSerializer(qs, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def session_detail(request, pk):
+    """
+    GET /api/sessions/<id>/
+    Get session detail with linked files and analyses.
+    """
+    try:
+        session = UploadSession.objects.get(id=pk)
+    except UploadSession.DoesNotExist:
+        return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    session_data = UploadSessionSerializer(session).data
+    analyses = AnalysisResultListSerializer(session.analyses.all(), many=True).data
+    session_data['analyses'] = analyses
+    return Response(session_data)
+
+
+# ── File Upload ──
 
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
@@ -29,6 +97,7 @@ def upload_file(request):
     """
     POST /api/upload/
     Upload an Excel/CSV file, store metadata in DB, return parsed preview data.
+    Optionally pass session_id to link to an existing upload session.
     """
     file_obj = request.FILES.get('file')
     if not file_obj:
@@ -37,10 +106,20 @@ def upload_file(request):
     file_type = request.data.get('file_type', 'flex_wip')
     city = request.data.get('city', 'Chennai')
     report_date = request.data.get('report_date', None)
+    session_id = request.data.get('session_id', None)
     uploaded_by = request.user.username
+
+    # Link to session if provided
+    session = None
+    if session_id:
+        try:
+            session = UploadSession.objects.get(id=session_id)
+        except UploadSession.DoesNotExist:
+            return Response({'error': 'Session not found.'}, status=status.HTTP_404_NOT_FOUND)
 
     # Create the UploadedFile record
     uploaded = UploadedFile.objects.create(
+        session=session,
         file=file_obj,
         file_type=file_type,
         original_name=file_obj.name,
@@ -73,14 +152,16 @@ def upload_file(request):
     }, status=status.HTTP_201_CREATED)
 
 
+# ── Process Files ──
+
 @api_view(['POST'])
 @permission_classes([IsAuthenticated])
 def process_files(request):
     """
     POST /api/process/
     Process call plan comparison.
-    Receives flex_file_id, optional callplan_file_id, city, report_date.
-    Returns classified rows (pending, new, dropped).
+    Receives flex_file_id, optional callplan_file_id, city, report_date, session_id.
+    Returns classified rows and stores AnalysisResult in DB.
     """
     serializer = ProcessRequestSerializer(data=request.data)
     serializer.is_valid(raise_exception=True)
@@ -94,6 +175,7 @@ def process_files(request):
 
     # Fetch optional call plan file
     callplan_path = None
+    callplan_file = None
     callplan_file_id = data.get('callplan_file_id')
     if callplan_file_id:
         try:
@@ -115,7 +197,38 @@ def process_files(request):
     except Exception as e:
         return Response({'error': f'Processing failed: {str(e)}'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
+    # Resolve session
+    session_id = data.get('session_id')
+    session = None
+    if session_id:
+        try:
+            session = UploadSession.objects.get(id=session_id)
+        except UploadSession.DoesNotExist:
+            pass
+
+    # Store analysis result in DB
+    summary = result['summary']
+    analysis = AnalysisResult.objects.create(
+        session=session,
+        flex_file=flex_file,
+        callplan_file=callplan_file,
+        city=city,
+        report_date=report_date,
+        analyzed_by=request.user.username,
+        total_count=summary.get('total', 0),
+        pending_count=summary.get('pending', 0),
+        new_count=summary.get('new', 0),
+        dropped_count=summary.get('dropped', 0),
+        result_data={
+            'pending': result['pending'],
+            'new': result['new'],
+            'dropped': result['dropped'],
+            'all_rows': result['all_rows'],
+        },
+    )
+
     return Response({
+        'analysis_id': analysis.id,
         'summary': result['summary'],
         'pending': result['pending'],
         'new': result['new'],
@@ -217,9 +330,11 @@ def export_file(request):
         row_count=len(rows),
     )
 
-    # Also store individual records
+    # Also store individual records + detect closed calls
     records_to_create = []
+    closed_calls_to_create = []
     for row in rows:
+        morning = row.get('morning_status', '')
         records_to_create.append(CallPlanRecord(
             upload=generated,
             ticket_no=row.get('ticket_no', ''),
@@ -229,7 +344,7 @@ def export_file(request):
             location=row.get('location', ''),
             segment=row.get('segment', ''),
             classification=row.get('classification', 'NEW'),
-            morning_status=row.get('morning_status', ''),
+            morning_status=morning,
             evening_status=row.get('evening_status', ''),
             engineer=row.get('engineer', ''),
             contact_no=row.get('contact_no', ''),
@@ -240,8 +355,52 @@ def export_file(request):
             flex_status=row.get('flex_status', ''),
             wip_changed=row.get('wip_changed', ''),
             current_status_tat=row.get('current_status_tat', ''),
+            source='manual' if row.get('hp_owner', '') == 'Manual' else 'export',
         ))
+
+        # Copy closed calls to separate tracking table
+        if morning.lower() in ('closed', 'closed cancelled'):
+            closed_calls_to_create.append(ClosedCall(
+                ticket_no=row.get('ticket_no', ''),
+                case_id=row.get('case_id', ''),
+                product=row.get('product', ''),
+                wip_aging=row.get('wip_aging', 0),
+                location=row.get('location', ''),
+                segment=row.get('segment', ''),
+                engineer=row.get('engineer', ''),
+                contact_no=row.get('contact_no', ''),
+                parts=row.get('parts', ''),
+                month=row.get('month', ''),
+                wo_otc_code=row.get('wo_otc_code', ''),
+                hp_owner=row.get('hp_owner', ''),
+                flex_status=row.get('flex_status', ''),
+                morning_status=morning,
+                evening_status=row.get('evening_status', ''),
+                current_status_tat=row.get('current_status_tat', ''),
+                city=city,
+                report_date=report_date,
+                closed_by=request.user.username,
+            ))
+
     CallPlanRecord.objects.bulk_create(records_to_create)
+    if closed_calls_to_create:
+        ClosedCall.objects.bulk_create(closed_calls_to_create)
+
+    # Save analysis summary at export time
+    pending_count = sum(1 for r in rows if r.get('classification') == 'PENDING')
+    new_count = sum(1 for r in rows if r.get('classification') == 'NEW')
+    AnalysisResult.objects.create(
+        flex_file=None,
+        callplan_file=None,
+        city=city,
+        report_date=report_date,
+        analyzed_by=request.user.username,
+        total_count=len(rows),
+        pending_count=pending_count,
+        new_count=new_count,
+        dropped_count=0,
+        result_data={'source': 'export', 'closed_count': len(closed_calls_to_create)},
+    )
 
     # Return file download — FileResponse handles closing the file handle
     response = FileResponse(
@@ -251,6 +410,198 @@ def export_file(request):
         content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
     )
     return response
+
+
+# ── Manual WO Addition ──
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def add_manual_wo(request):
+    """
+    POST /api/manual-wo/
+    Save a manually added Work Order directly to DB as a CallPlanRecord.
+    """
+    serializer = ManualWOSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    ticket_no = data['ticket_no'].strip().upper()
+
+    # Validate WO format
+    if not re.match(r'^WO-\d{9}$', ticket_no, re.IGNORECASE) and not re.match(r'^\d{9}$', ticket_no):
+        return Response(
+            {'error': 'Invalid Work Order format. Expected: WO-XXXXXXXXX or 9 digits.'},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    record = CallPlanRecord.objects.create(
+        upload=None,
+        ticket_no=ticket_no,
+        case_id=data.get('case_id', ''),
+        product=data.get('product', ''),
+        wip_aging=data.get('wip_aging', 0),
+        location=data.get('location', ''),
+        segment=data.get('segment', ''),
+        classification=data.get('classification', 'NEW'),
+        morning_status=data.get('morning_status', 'To be scheduled'),
+        evening_status=data.get('evening_status', ''),
+        engineer=data.get('engineer', ''),
+        contact_no=data.get('contact_no', ''),
+        parts=data.get('parts', ''),
+        month=data.get('month', ''),
+        wo_otc_code=data.get('wo_otc_code', ''),
+        hp_owner=data.get('hp_owner', 'Manual'),
+        flex_status=data.get('flex_status', 'Manual Entry'),
+        wip_changed=data.get('wip_changed', 'New'),
+        current_status_tat=data.get('current_status_tat', ''),
+        source='manual',
+    )
+
+    return Response(
+        CallPlanRecordSerializer(record).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+# ── Closed Calls ──
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def mark_closed_call(request):
+    """
+    POST /api/closed-calls/
+    Copy a call to the ClosedCall table when morning report marks it as closed.
+    """
+    serializer = ClosedCallRequestSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    closed_call = ClosedCall.objects.create(
+        ticket_no=data.get('ticket_no', ''),
+        case_id=data.get('case_id', ''),
+        product=data.get('product', ''),
+        wip_aging=data.get('wip_aging', 0),
+        location=data.get('location', ''),
+        segment=data.get('segment', ''),
+        engineer=data.get('engineer', ''),
+        contact_no=data.get('contact_no', ''),
+        parts=data.get('parts', ''),
+        month=data.get('month', ''),
+        wo_otc_code=data.get('wo_otc_code', ''),
+        hp_owner=data.get('hp_owner', ''),
+        flex_status=data.get('flex_status', ''),
+        morning_status=data.get('morning_status', 'Closed'),
+        evening_status=data.get('evening_status', ''),
+        current_status_tat=data.get('current_status_tat', ''),
+        city=data.get('city', 'Chennai'),
+        report_date=data.get('report_date'),
+        closed_by=request.user.username,
+    )
+
+    return Response(
+        ClosedCallSerializer(closed_call).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_closed_calls(request):
+    """
+    GET /api/closed-calls/
+    List all closed calls. Optional filters: city, report_date.
+    """
+    qs = ClosedCall.objects.all()
+
+    city = request.query_params.get('city')
+    if city:
+        qs = qs.filter(city__iexact=city)
+
+    report_date = request.query_params.get('report_date')
+    if report_date:
+        qs = qs.filter(report_date=report_date)
+
+    serializer = ClosedCallSerializer(qs, many=True)
+    return Response(serializer.data)
+
+
+# ── Analysis History ──
+
+@api_view(['POST'])
+@permission_classes([IsAuthenticated])
+def save_analysis(request):
+    """
+    POST /api/analyses/save/
+    Save client-side analysis results to DB.
+    Called after frontend processes data locally.
+    """
+    serializer = SaveAnalysisSerializer(data=request.data)
+    serializer.is_valid(raise_exception=True)
+    data = serializer.validated_data
+
+    session = None
+    session_id = data.get('session_id')
+    if session_id:
+        try:
+            session = UploadSession.objects.get(id=session_id)
+        except UploadSession.DoesNotExist:
+            pass
+
+    analysis = AnalysisResult.objects.create(
+        session=session,
+        flex_file=None,
+        callplan_file=None,
+        city=data.get('city', 'Chennai'),
+        report_date=data.get('report_date'),
+        analyzed_by=request.user.username,
+        total_count=data.get('total_count', 0),
+        pending_count=data.get('pending_count', 0),
+        new_count=data.get('new_count', 0),
+        dropped_count=data.get('dropped_count', 0),
+        result_data=data.get('result_data', {}),
+    )
+
+    return Response(
+        AnalysisResultSerializer(analysis).data,
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def list_analyses(request):
+    """
+    GET /api/analyses/
+    List all analysis results. Optional filters: city, report_date.
+    """
+    qs = AnalysisResult.objects.all()
+
+    city = request.query_params.get('city')
+    if city:
+        qs = qs.filter(city__iexact=city)
+
+    report_date = request.query_params.get('report_date')
+    if report_date:
+        qs = qs.filter(report_date=report_date)
+
+    serializer = AnalysisResultListSerializer(qs, many=True)
+    return Response(serializer.data)
+
+
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def analysis_detail(request, pk):
+    """
+    GET /api/analyses/<id>/
+    Get full analysis result with result_data.
+    """
+    try:
+        analysis = AnalysisResult.objects.get(id=pk)
+    except AnalysisResult.DoesNotExist:
+        return Response({'error': 'Analysis not found.'}, status=status.HTTP_404_NOT_FOUND)
+
+    serializer = AnalysisResultSerializer(analysis)
+    return Response(serializer.data)
 
 
 @api_view(['GET'])

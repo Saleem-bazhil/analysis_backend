@@ -1,4 +1,20 @@
+from django.conf import settings
 from django.db import models
+
+
+class UserProfile(models.Model):
+    """Extends the built-in User with a region (city) assignment for RBAC."""
+
+    user = models.OneToOneField(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='profile',
+    )
+    region = models.CharField(
+        max_length=100, blank=True, default='',
+        help_text='City/region this user belongs to. Empty means admin (all regions).',
+    )
+
+    def __str__(self):
+        return f"{self.user.username} — {self.region or 'All Regions'}"
 
 
 class UploadSession(models.Model):

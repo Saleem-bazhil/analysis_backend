@@ -10,6 +10,26 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework.response import Response
 from rest_framework_simplejwt.tokens import RefreshToken
 
+from .models import UserProfile
+
+
+def _get_user_region(user):
+    """Return the region string for a user, or '' for admins."""
+    try:
+        return user.profile.region
+    except UserProfile.DoesNotExist:
+        return ''
+
+
+def _user_payload(user):
+    """Build the user info dict returned by login and me endpoints."""
+    return {
+        'id': user.id,
+        'username': user.username,
+        'is_staff': user.is_staff,
+        'region': _get_user_region(user),
+    }
+
 
 @api_view(['POST'])
 @permission_classes([AllowAny])
@@ -39,11 +59,7 @@ def login(request):
     return Response({
         'access': str(refresh.access_token),
         'refresh': str(refresh),
-        'user': {
-            'id': user.id,
-            'username': user.username,
-            'is_staff': user.is_staff,
-        },
+        'user': _user_payload(user),
     })
 
 
@@ -82,9 +98,4 @@ def me(request):
     GET /api/auth/me/
     Returns the current authenticated user's info.
     """
-    user = request.user
-    return Response({
-        'id': user.id,
-        'username': user.username,
-        'is_staff': user.is_staff,
-    })
+    return Response(_user_payload(request.user))

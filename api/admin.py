@@ -1,5 +1,12 @@
 from django.contrib import admin
-from .models import UploadedFile, CallPlanRecord, UploadSession, AnalysisResult, ClosedCall
+from .models import UserProfile, UploadedFile, CallPlanRecord, UploadSession, AnalysisResult, ClosedCall
+
+
+@admin.register(UserProfile)
+class UserProfileAdmin(admin.ModelAdmin):
+    list_display = ['user', 'region']
+    list_filter = ['region']
+    search_fields = ['user__username', 'region']
 
 
 @admin.register(UploadSession)

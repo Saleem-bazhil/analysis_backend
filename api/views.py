@@ -31,6 +31,35 @@ from .serializers import (
     SaveAnalysisSerializer,
 )
 from .engine import process_call_plan, generate_export_df, read_file_to_df
+from .models import UserProfile
+
+
+def _get_user_region(user):
+    """Return the user's assigned region, or '' if admin/unset."""
+    try:
+        return user.profile.region
+    except UserProfile.DoesNotExist:
+        return ''
+
+
+def _is_admin(user):
+    """Admin users (is_staff=True or no region) can access all regions."""
+    return user.is_staff or not _get_user_region(user)
+
+
+def _filter_by_region(queryset, user, city_field='city'):
+    """Filter a queryset to the user's region. Admins see everything."""
+    if _is_admin(user):
+        return queryset
+    region = _get_user_region(user)
+    return queryset.filter(**{f'{city_field}__iexact': region})
+
+
+def _enforce_region(user, requested_city):
+    """Return the city to use. Non-admins always get their own region."""
+    if _is_admin(user):
+        return requested_city
+    return _get_user_region(user)
 
 
 # ── Upload Session ──
@@ -42,7 +71,7 @@ def create_upload_session(request):
     POST /api/sessions/
     Create a new upload session to group flex + rtpl files together.
     """
-    city = request.data.get('city', 'Chennai')
+    city = _enforce_region(request.user, request.data.get('city', 'Chennai'))
     report_date = request.data.get('report_date', None)
 
     session = UploadSession.objects.create(
@@ -62,7 +91,7 @@ def list_upload_sessions(request):
     GET /api/sessions/
     List all upload sessions.
     """
-    qs = UploadSession.objects.all()
+    qs = _filter_by_region(UploadSession.objects.all(), request.user)
     city = request.query_params.get('city')
     if city:
         qs = qs.filter(city__iexact=city)
@@ -104,7 +133,7 @@ def upload_file(request):
         return Response({'error': 'No file provided.'}, status=status.HTTP_400_BAD_REQUEST)
 
     file_type = request.data.get('file_type', 'flex_wip')
-    city = request.data.get('city', 'Chennai')
+    city = _enforce_region(request.user, request.data.get('city', 'Chennai'))
     report_date = request.data.get('report_date', None)
     session_id = request.data.get('session_id', None)
     uploaded_by = request.user.username
@@ -184,7 +213,7 @@ def process_files(request):
         except UploadedFile.DoesNotExist:
             return Response({'error': 'Call plan file not found.'}, status=status.HTTP_404_NOT_FOUND)
 
-    city = data.get('city', 'Chennai')
+    city = _enforce_region(request.user, data.get('city', 'Chennai'))
     report_date = data.get('report_date')
 
     try:
@@ -245,7 +274,7 @@ def list_files(request):
     List all uploaded files with metadata.
     Optional query params: file_type, city
     """
-    qs = UploadedFile.objects.all()
+    qs = _filter_by_region(UploadedFile.objects.all(), request.user)
 
     uploaded_by = request.query_params.get('uploaded_by')
     if uploaded_by:
@@ -292,7 +321,7 @@ def export_file(request):
     data = serializer.validated_data
 
     rows = data['rows']
-    city = data.get('city', 'Chennai')
+    city = _enforce_region(request.user, data.get('city', 'Chennai'))
     report_date = data.get('report_date')
 
     if not rows:
@@ -493,7 +522,7 @@ def mark_closed_call(request):
         morning_status=data.get('morning_status', 'Closed'),
         evening_status=data.get('evening_status', ''),
         current_status_tat=data.get('current_status_tat', ''),
-        city=data.get('city', 'Chennai'),
+        city=_enforce_region(request.user, data.get('city', 'Chennai')),
         report_date=data.get('report_date'),
         closed_by=request.user.username,
     )
@@ -511,7 +540,7 @@ def list_closed_calls(request):
     GET /api/closed-calls/
     List all closed calls. Optional filters: city, report_date.
     """
-    qs = ClosedCall.objects.all()
+    qs = _filter_by_region(ClosedCall.objects.all(), request.user)
 
     city = request.query_params.get('city')
     if city:
@@ -551,7 +580,7 @@ def save_analysis(request):
         session=session,
         flex_file=None,
         callplan_file=None,
-        city=data.get('city', 'Chennai'),
+        city=_enforce_region(request.user, data.get('city', 'Chennai')),
         report_date=data.get('report_date'),
         analyzed_by=request.user.username,
         total_count=data.get('total_count', 0),
@@ -574,7 +603,7 @@ def list_analyses(request):
     GET /api/analyses/
     List all analysis results. Optional filters: city, report_date.
     """
-    qs = AnalysisResult.objects.all()
+    qs = _filter_by_region(AnalysisResult.objects.all(), request.user)
 
     city = request.query_params.get('city')
     if city:
@@ -613,6 +642,7 @@ def history(request):
     """
     uploaded_by = request.query_params.get('uploaded_by')
     qs = UploadedFile.objects.filter(file_type='generated').order_by('-uploaded_at')
+    qs = _filter_by_region(qs, request.user)
     if uploaded_by:
         qs = qs.filter(uploaded_by=uploaded_by)
     serializer = UploadedFileListSerializer(qs, many=True)
